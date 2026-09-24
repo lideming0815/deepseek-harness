@@ -1,8 +1,13 @@
-/** Cache limits shared by the Host configuration and browser document previews. */
+/** Execution policy and cache limits shared by Host configuration and browser document previews. */
 import z from '@deepseek-ai/schemastery'
 
-/** Transient Office conversion reuse within one Client connection. */
+/** HTML execution policy and bounded document processing within one Client connection. */
 export interface Config {
+  /** HTML execution policy, independent from other Coding Tools capabilities. */
+  html: {
+    /** Coding Tools preserves the user preference; isolated mode requires a finite local resource set. */
+    mode: 'coding-tools' | 'static' | 'isolated-interactive'
+  }
   /** Retained PDF limits; pending conversions share cancellation by reader lifetime. */
   office: {
     /** Maximum retained completed PDFs. */
@@ -25,8 +30,9 @@ export interface Config {
   }
 }
 
-/** Deployment limits applied before Office preview registration. */
-export const Config: z<{ office?: Partial<Config['office']>; excel?: Partial<Config['excel']> }, Config> = z.object({
+/** Deployment settings applied before document preview registration. */
+export const Config: z<{ office?: Partial<Config['office']>; excel?: Partial<Config['excel']>; html?: Partial<Config['html']> }, Config> = z.object({
+  html: z.object({ mode: z.union(['coding-tools', 'static', 'isolated-interactive'] as const).default('coding-tools') }),
   office: z.object({
     maxCachedEntries: z.natural().min(1).max(Number.MAX_SAFE_INTEGER).default(8),
     maxCachedBytes: z.natural().min(1).max(Number.MAX_SAFE_INTEGER).default(64 * 1024 * 1024),

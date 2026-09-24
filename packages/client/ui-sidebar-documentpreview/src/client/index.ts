@@ -121,7 +121,7 @@ export function apply(ctx: ClientContext): void {
   )), 'ui-sidebar-documentpreview: text title')
   registerText(ctx)
   registerMarkdown(ctx)
-  registerHtml(ctx)
+  registerHtml(ctx, config.html)
   registerImage(ctx)
   registerPdf(ctx)
   registerCode(ctx)

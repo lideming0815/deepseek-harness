@@ -8,9 +8,13 @@
   "include": [
     "src/client",
     "src/config.ts",
+    "src/isolated-html.ts",
     "src/css-modules.d.ts"
   ],
   "references": [
+    {
+      "path": "../../util/crypto"
+    },
     {
       "path": "../../api/gateway/tsconfig.client.json"
     },

@@ -49,7 +49,7 @@ describe('HTML registration', () => {
       bind: () => (key: keyof typeof en) => en[key],
       register: (name: string, value: unknown) => { dictionaries.set(name, value); return () => { dictionaries.delete(name) } },
     } as never)
-    const fiber = ctx.plugin({ inject: ['configForms'], apply })
+    const fiber = ctx.plugin({ inject: ['configForms'], apply }, { mode: 'coding-tools' })
     dispose = async () => { await fiber.dispose() }
     await fiber.await()
     expect(registry.candidates('INDEX.HTM').map(entry => entry.id)).toEqual([HTML_BODY_ID])

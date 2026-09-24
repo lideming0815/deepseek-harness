@@ -58,6 +58,15 @@ describe('HTML bootstrap', () => {
     expect(decodeText(utf8('雪\u2028\u2029'))).toBe('雪\u2028\u2029')
   })
 
+  it('preserves binary image bytes and rewrites every matching image inside the opaque frame', () => {
+    const result = run(createHtmlDocument({ data: utf8('<img src="./a.png"><img src="./a.png">'), assets: [
+      { kind: 'image', reference: './a.png', mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71, 255]) },
+    ] }))
+    expect(result.createObjectURL).toHaveBeenCalledOnce()
+    expect(result.createObjectURL.mock.calls[0]?.[0].type).toBe('image/png')
+    expect([...result.document.querySelectorAll('img')].map(image => image.getAttribute('src'))).toEqual(['blob:null/resource-1', 'blob:null/resource-1'])
+  })
+
   it('base64-encodes a large UTF-8 payload in browser-safe chunks', () => {
     const source = `${'0123456789abcdef'.repeat(16_384)}雪`
     const bytes = Uint8Array.from(atob(encodeText(source)), character => character.charCodeAt(0))

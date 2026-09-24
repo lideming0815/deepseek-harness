@@ -10,6 +10,9 @@ import { createHtmlDocument } from './bootstrap.ts'
 import { createBasicHtmlDocument } from './basic-document.ts'
 import { packHtml } from './pack.ts'
 import { createReadHtmlRelative } from './read-relative.ts'
+import { IsolatedHtmlFrame } from './IsolatedHtmlFrame.tsx'
+import type { Config } from '../../config.ts'
+import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import type { ReadHtmlRelated } from './read-relative.ts'
 import type {} from './locales.ts'
 import css from './HtmlBody.module.css'
@@ -20,6 +23,8 @@ export type HtmlBodyProps = DocumentPreviewProps & PropsLocale<'documentHtml'> &
 /** Related-file reader and accepted preview mode supplied by the plugin. */
 export interface HtmlBodyInjected {
   hooks: { interactivePreview: ObservableSnapshot<boolean> }
+  /** Deployment HTML policy; isolated interaction does not enable other Coding Tools. */
+  readonly htmlMode: Config['html']['mode']
   /** Ordinary Remote callback bound by this renderer's Slot inject. */
   readonly readRelated: ReadHtmlRelated
 }
@@ -27,12 +32,14 @@ export interface HtmlBodyInjected {
 type FrameInput = Pick<HtmlBodyProps, 'resourceAddress' | 'readRelated' | 'addResource' | 'setResources'> & {
   readonly data: Uint8Array<ArrayBuffer>
   readonly signal: AbortSignal
+  readonly frameName: string
+  readonly isolated: boolean
 }
 
-type FrameState = Pick<FrameInput, 'data' | 'readRelated'> & { readonly url: string | undefined }
+type FrameState = Pick<FrameInput, 'data' | 'readRelated'> & { readonly url: string | undefined; readonly isolated?: { html: string; token: string } }
 
 /** One mounted file owns its root Blob; replacing content also replaces the browsing context. */
-function HtmlFrame({ data, resourceAddress, readRelated, addResource, setResources, signal, t }: FrameInput & { t: HtmlBodyProps['t'] }): ReactNode {
+function HtmlFrame({ data, resourceAddress, readRelated, addResource, setResources, signal, frameName, isolated, t }: FrameInput & { t: HtmlBodyProps['t'] }): ReactNode {
   const [frame, setFrame] = useState<FrameState>()
   useEffect(() => {
     const controller = new AbortController()
@@ -44,8 +51,13 @@ function HtmlFrame({ data, resourceAddress, readRelated, addResource, setResourc
     let url: string | undefined
     void (async () => {
       try {
-        const bundle = await packHtml(data, readRelative, controller.signal)
+        const bundle = await packHtml(data, readRelative, controller.signal, isolated)
         controller.signal.throwIfAborted()
+        if (isolated) {
+          const token = randomUUID()
+          setFrame({ data, readRelated, url: undefined, isolated: { html: createHtmlDocument(bundle, token), token } })
+          return
+        }
         const html = createHtmlDocument(bundle)
         url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
         setFrame({ data, readRelated, url })
@@ -59,11 +71,12 @@ function HtmlFrame({ data, resourceAddress, readRelated, addResource, setResourc
       controller.abort()
       if (url !== undefined) URL.revokeObjectURL(url)
     }
-  }, [data, readRelated, resourceAddress, addResource, setResources, signal])
+  }, [data, readRelated, resourceAddress, addResource, setResources, signal, isolated])
 
   if (frame?.data !== data || frame.readRelated !== readRelated) {
     return <LoadingIndicator className={clsx(css.status, css.opening)} label={t('loading')} />
   }
+  if (frame.isolated !== undefined) return <IsolatedHtmlFrame key={frame.isolated.token} {...frame.isolated} frameName={frameName} t={t} />
   if (frame.url === undefined) return <p className={css.status} role="alert">{t('failed')}</p>
   return <iframe key={frame.url} className={css.frame} src={frame.url} sandbox="allow-scripts" title={t('frame')} data-html-preview />
 }
@@ -74,17 +87,19 @@ function HtmlFrame({ data, resourceAddress, readRelated, addResource, setResourc
  * @returns an isolated HTML document, or nothing for text delivery.
  */
 export function HtmlBody({
-  content, resourceAddress, readRelated, useTabInfo, useInteractivePreview, addResource, setResources, t,
+  content, resourceAddress, readRelated, useTabInfo, useInteractivePreview, htmlMode, addResource, setResources, t,
 }: HtmlBodyProps): ReactNode {
-  const interactivePreview = useInteractivePreview(value => value)
+  const preference = useInteractivePreview(value => value)
+  const interactivePreview = htmlMode === 'isolated-interactive' || htmlMode === 'coding-tools' && preference
   const { tab } = useTabInfo()
   useEffect(() => {
     if (!interactivePreview) setResources([])
   }, [interactivePreview, setResources])
   if (content.kind !== 'bytes') return null
+  const frameName = `dsh-sidebar-html-${tab.id}`
   if (!interactivePreview) return <BasicHtmlFrame data={content.data} t={t} />
-  return <HtmlFrame key={resourceAddress} data={content.data} resourceAddress={resourceAddress}
-    readRelated={readRelated} signal={tab.signal} addResource={addResource} setResources={setResources} t={t} />
+  return <HtmlFrame key={`${resourceAddress}:${htmlMode}`} data={content.data} resourceAddress={resourceAddress} isolated={htmlMode === 'isolated-interactive'}
+    readRelated={readRelated} signal={tab.signal} frameName={frameName} addResource={addResource} setResources={setResources} t={t} />
 }
 
 /** Static preview mounts a separate browsing context so a mode change retires running scripts. */
