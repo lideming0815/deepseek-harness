@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-24-isolated-html-preview.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-24-isolated-html-preview.md
+/agent-note-isolated-interactive-html-preview:
+  en: b8a3243f7ee9cc77
+  zh: 2b18ec123c23f9b9
+/agent-note-isolated-interactive-html-preview/problem:
+  en: 250853edac62dccf
+  zh: 615f47ac3664f01d
+/agent-note-isolated-interactive-html-preview/decision:
+  en: a1b4b1ec580a360a
+  zh: 8b5268b09b87f936
+/agent-note-isolated-interactive-html-preview/alternatives-considered:
+  en: 13830a4e6a6902dd
+  zh: debd729229ec4eb3
+/agent-note-isolated-interactive-html-preview/consequences:
+  en: 220d7ba0b7a75f2d
+  zh: 887d1aeeedcb361b

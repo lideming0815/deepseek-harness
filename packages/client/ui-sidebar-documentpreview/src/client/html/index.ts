@@ -7,6 +7,7 @@ import { HtmlBody } from './HtmlBody.tsx'
 import type { HtmlBodyInjected } from './HtmlBody.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { en, zh } from './locales.ts'
+import type { Config } from '../../config.ts'
 
 /** HTML implementation identity, shared by metadata and the keyed slot. */
 export const HTML_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/html'
@@ -23,8 +24,9 @@ export function htmlBodyDefinition(title: () => string): DocumentPreviewDefiniti
 /**
  * Register the HTML dictionary, metadata and body with reversible effects.
  * @param ctx - owning plugin context.
+ * @param config - deployment HTML execution policy.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config['html']): void {
   const t = ctx.locale.bind('documentHtml')
   ctx.effect(() => ctx.locale.register('documentHtml', { zh, en }))
   ctx.effect(() => ctx.documentPreviews.register(htmlBodyDefinition(() => t('title'))))
@@ -33,6 +35,7 @@ export function apply(ctx: Context): void {
       name: 'sidebar.right.tab.document', key: HTML_BODY_ID, locale: 'documentHtml',
       inject: (): HtmlBodyInjected => ({
         hooks: { interactivePreview: ctx.configForms.developerTools.enabled },
+        htmlMode: config.mode,
         readRelated: (address, relativePath, signal) => {
           const file = hostFileOf(address)
           return ctx.remote.workspaceFiles.readBytes(file.sessionId, relativePath, { baseFile: file.path }, signal)

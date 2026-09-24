@@ -15,6 +15,21 @@ import { hostFileOf } from '../rpc.ts'
 export type ReadHtmlRelated = (address: string, relativePath: string, signal: AbortSignal) => Promise<RemoteResult<DocumentFileBytes>>
 
 /**
+ * Normalize one HTML URL while retaining Host ownership of directory resolution.
+ * @param reference - HTML-decoded URL attribute.
+ * @returns one decoded relative filename without URL query or fragment.
+ */
+export function htmlRelativePath(reference: string): string {
+  const trimmed = reference.trim()
+  const suffix = trimmed.search(/[?#]/u)
+  const path = decodeURIComponent(suffix === -1 ? trimmed : trimmed.slice(0, suffix))
+  if (path.length === 0 || /^(?:[a-z][a-z\d+.-]*:|\/)/iu.test(path) || /[\\\u0000-\u001f\u007f]/u.test(path)) {
+    throw new Error('HTML dependency must use a relative file path')
+  }
+  return path
+}
+
+/**
  * Bind a package reader to the original HTML file's address.
  * @param readRelated - workspace reader using the Session in the root HTML address.
  * @param address - root HTML file address.
@@ -29,11 +44,7 @@ export function createReadHtmlRelative(
   addResource: (address: string) => void,
 ): ReadHtmlRelative {
   return async (reference, signal) => {
-    const suffix = reference.search(/[?#]/u)
-    const path = decodeURIComponent(suffix === -1 ? reference : reference.slice(0, suffix))
-    if (path.length === 0 || /^(?:[a-z][a-z\d+.-]*:|[/\\])/iu.test(path) || path.includes('\0') || path.includes('\\')) {
-      throw new Error('HTML dependency must use a relative file path')
-    }
+    const path = htmlRelativePath(reference)
     const combined = AbortSignal.any([lifetime, signal])
     combined.throwIfAborted()
     const file = hostFileOf(address)

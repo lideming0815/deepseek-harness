@@ -7,6 +7,11 @@
     "noEmit": true,
     "rewriteRelativeImportExtensions": false
   },
+  // Browser-policy tests also exercise these pure serializers, which carry no Client Context merges.
+  "files": [
+    "packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts",
+    "packages/client/ui-sidebar-documentpreview/src/client/html/bytes.ts"
+  ],
   "include": [
     "apps/web/product-isolation.ts",
     "apps/web/tests/connection-recovery.e2e.ts",
@@ -56,6 +61,7 @@
     "apps/web/tests/details-session-lifecycle.e2e.ts",
     "apps/web/tests/sessionless-header.e2e.ts",
     "apps/web/tests/document-preview.e2e.ts",
+    "apps/web/tests/isolated-html-policy.e2e.ts",
     "apps/web/tests/excel-opc.e2e.ts",
     "apps/web/tests/office-fixture.ts",
     "apps/web/tests/sidebar-browser.e2e.ts",

@@ -46,9 +46,23 @@ After all text pages load, Markdown images use the authenticated `/api/file` rou
 <a id="how-it-reads"></a>
 ## How it reads
 
-Coding Tools selects the HTML preview policy in both Web and desktop. The renderer receives `interactivePreview` from plugin assembly. Off uses a DOMPurify-sanitized complete static document in an iframe with no sandbox permissions: CSP blocks scripts, external resources, connections, forms, and nested frames; all `href` and `xlink:href` attributes, refresh directives, and declarative shadow roots are removed before reparsing. Inline styles and data images remain visible, and related files are not read. On uses the scripted Blob preview described below. A mode change unmounts the previous frame and aborts its pending related-file reads. Static preview releases CSS/JS resource subscriptions and keeps the root file watched. Other document formats retain their own policies.
+Configure `html.mode` on the `ui-sidebar-documentpreview` Host entry; the default `coding-tools` retains the Web and desktop Coding Tools preference.
 
-Both HTML modes set the initial iframe name to `dsh-sidebar-html-<tab-id>` for Desktop shortcut routing. This correlation does not grant the preview access to the parent document.
+`static` always uses a DOMPurify-sanitized document in an iframe without sandbox permissions, regardless of that preference.
+
+Its CSP blocks scripts, external resources, connections, forms, and nested frames; sanitization removes navigation attributes, refresh directives, and declarative shadow roots.
+
+Inline styles and data images remain visible, and related files are not read.
+
+`isolated-interactive` enables the finite offline HTML preview described below without enabling other Coding Tools capabilities.
+
+Changing mode unmounts the previous frame and aborts pending related-file reads; static preview releases dependency subscriptions while retaining the root Resource.
+
+Other document formats retain their own policies.
+
+Every HTML mode sets the initial iframe name to `dsh-sidebar-html-<tab-id>` for Desktop shortcut routing.
+
+This correlation does not grant access to the parent document.
 
 The body reads its record, navigation and lifetime through `useTabInfo().tab`. `useResource<'file'>(tab.contentId)` supplies metadata; ordinary inject callbacks supply content reads:
 
@@ -57,7 +71,41 @@ The body reads its record, navigation and lifetime through `useTabInfo().tab`. `
 - **Complete bytes** — PDF, HTML, common images, and spreadsheets call `remote.workspaceFiles.readBytes(sessionId, path, {}, signal)`. The binary Remote returns `data: Uint8Array<ArrayBuffer>` directly for `{ kind: 'bytes', data }`. The Host's `maxFileBytes` cap rejects oversized files rather than truncating them. PDF and spreadsheet renderers copy retained bytes before Worker transfer, keeping the Preview buffer usable. Bytes stay in transient view state, never persisted layouts or Session JSONL. Loading-mode changes retire previous results.
 - **Reload** — manual reload rereads only the current Preview tab through its Remote callbacks, preserving its scroll preference and retiring older requests. Automatic refresh uses the same callbacks after a `ResourceGroup` member changes. Each member's first metadata establishes a baseline without triggering reload or first-read version reconciliation; later changes received during a read remain pending for another refresh. Reads neither refresh shared metadata nor clear another tab's notice.
 
-When Coding Tools is enabled, HTML fills the body edge to edge in a Blob iframe with exactly `sandbox="allow-scripts"`, without `allow-same-origin`; scripts cannot access the parent application's origin or file reader. The renderer loads directly declared relative `.js` classic scripts and `.css` stylesheets through its injected Remote callback, with fixed safety limits of 4 MiB per asset, 32 MiB total, and 64 distinct assets. Host code resolves the related path, and `readBytes` with `baseFile` returns native bytes. The dependency Resource is added after the read returns, using its `absolutePath` or a string `error.details.path` on failure; without a Host path, the Client does not guess one. Inside the renderer, base64 is used only to embed the iframe bootstrap payload in script text. A `<base href>` leaves dependency resolution to the browser, as do HTTPS resources. Local module imports, CSS `url()`/`@import`, and dynamic `fetch` do not use Host file access. Read failures, invalid UTF-8, or exceeded limits fail the preview rather than publishing a partial asset package. Replacing or unmounting the document releases its Blob URL.
+With `html.mode: coding-tools` and Coding Tools enabled, HTML fills the body in a Blob iframe with `sandbox="allow-scripts"`, without `allow-same-origin`; scripts cannot access the parent application or file reader.
+
+Direct relative `.js` classic scripts and `.css` stylesheets use the injected Remote callback, with fixed limits of 4 MiB per asset, 32 MiB including the document, and 64 distinct assets.
+
+`readBytes(sessionId, relativePath, { baseFile }, signal)` retains the original document address's Session and directory authority, including a provider-defined immutable version scope.
+
+URL attributes are trimmed, query and fragment suffixes removed, and filenames decoded once before the Host read.
+
+The dependency Resource uses the returned `absolutePath` or a string `error.details.path` on failure; the Client does not guess missing paths.
+
+In this default mode, `<base href>` and HTTPS resources retain browser resolution; module imports, CSS resource references, and dynamic requests have no Host file bridge.
+
+Read failures, invalid UTF-8, or exceeded limits fail the preview; replacement releases its Blob URL.
+
+The opt-in `isolated-interactive` mode additionally packages relative PNG, JPEG, GIF, WebP, BMP, and passive SVG images, plus canonical base64 image data.
+
+It rejects external references, modules, nested documents, forms, navigation targets, and CSS `url()`, image functions, `@import`, or escapes before opening the frame.
+
+Linked CSS must be self-contained; related files are read only through the same scoped reader, and unsupported or missing dependencies fail the whole preview.
+
+The Host serves a data-free bootstrap at `/assets/document-preview/isolated-html` with `Connection-Allowlist: (); report-to=preview` and an enforced CSP.
+
+No `Reporting-Endpoints` destination is configured.
+
+The opaque frame constructs and closes a WebRTC connection without ICE servers or an offer, then requires a local `ReportingObserver` report proving an enforced empty connection allowlist before receiving any document bytes.
+
+The native response policy remains active across document replacement and blocks HTTP requests, WebRTC, and document navigation; CSP separately restricts resources, forms, Workers, and descendant frames.
+
+A missing route, stripped header, unsupported browser, or missing enforcement report shows an unsupported-preview message and never receives the document.
+
+Resource errors, script errors, rejected promises, and observed policy violations replace the frame with a failure message; loading is acknowledged by the rendered document.
+
+An HTTP(S) application base and the preserved response policy are required; file-based desktop loading cannot use this mode.
+
+The [isolation decision](../../../.agents/notes/implemented/feature/2026-09-24-isolated-html-preview.md) explains why a sandbox and `connect-src` alone are insufficient.
 
 PNG, JPEG, GIF, WebP, BMP, ICO, and SVG render through Blob URLs in an `<img>` static-image context, rounded inside a 12px inset. Images default to fit width without enlarging content smaller than the pane; 100% uses the image's intrinsic CSS-pixel width. The shared zoom controls can produce horizontal and vertical scrolling, but do not provide drag-to-pan. Zoom changes retain the same `<img>` and Blob URL, so animated images continue playing. Raster formats can soften above their intrinsic size, while SVG remains on the browser's vector rendering path. SVG markup never enters the application DOM or an iframe, so its scripts cannot execute or reach the parent page. Replacing or unmounting the image revokes its Blob URL.
 
@@ -140,7 +188,9 @@ No direct effect; what the user reads here never enters a model request.
 - **Sequential text and bounded complete files.** Deep source lines require the preceding pages; PDF, HTML, and images require a complete result within the Host's `maxFileBytes` cap.
 - **PDF raster allocation is bounded.** Each page bitmap is capped at 16,777,216 pixels; very large pages or high zoom on high-density displays can still render below device resolution.
 - **Byte-view scroll state is not restored.** PDF, HTML, and images can return to the top when their renderer remounts or reloads; fixed PDF and image zoom can overflow horizontally, and HTML iframe scrolling belongs to its opaque browsing context.
-- **Finite local HTML dependencies.** Only direct classic `.js` and stylesheet `.css` references are packed. Browser-resolved resources retain browser origin and network restrictions; no runtime file-read bridge is exposed to the iframe.
+- **Finite local HTML dependencies.** The default mode packs direct classic `.js` and stylesheet `.css` references; isolated interaction adds passive local images and rejects recursive CSS, modules, and external dependencies.
+
+  Isolated interaction requires a browser that proves native connection policy enforcement; it does not impose CPU or memory limits on scripts.
 - **Scroll writes are unthrottled.** Every scroll event records its offset in the store; the line blocks are memoized so the resulting re-render hands React the same elements back.
 - **A failed PDF chunk load requires a page reload.** React caches a rejected lazy import for the page lifetime; ordinary PDF open or render failures remain retryable inside the loaded body.
 

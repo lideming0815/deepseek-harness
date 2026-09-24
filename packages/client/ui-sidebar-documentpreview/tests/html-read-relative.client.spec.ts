@@ -15,7 +15,7 @@ describe('HTML relative file reader', () => {
     const loading = new AbortController()
     const addResource = vi.fn()
     const read = createReadHtmlRelative(readRelated, ADDRESS, tab.signal, addResource)
-    await expect(read('../a%20b.js?v=1#fragment', loading.signal)).resolves.toBe(value)
+    await expect(read(' ../a%20b.js?v=1#fragment ', loading.signal)).resolves.toBe(value)
     const signal = readRelated.mock.calls[0]?.[2]
     expect(readRelated).toHaveBeenCalledExactlyOnceWith(ADDRESS, '../a b.js', signal)
     expect(addResource).toHaveBeenCalledExactlyOnceWith(sessionFileAddress('html', value.absolutePath))
@@ -61,7 +61,7 @@ describe('HTML relative file reader', () => {
     })
     const signal = new AbortController().signal
     const read = createReadHtmlRelative(readRelated, ADDRESS, signal, vi.fn())
-    for (const path of ['', '/x.js', 'file:///x.js', '%2Fx.js', 'C:/x.js', '..\\x.js', '%00.js', '%ZZ.js']) {
+    for (const path of ['', '/x.js', 'file:///x.js', '%2Fx.js', 'C:/x.js', '..\\x.js', '%00.js', '%0Ax.js', '%ZZ.js']) {
       await expect(read(path, signal)).rejects.toThrow()
     }
     expect(readRelated).not.toHaveBeenCalled()
