@@ -1,0 +1,6 @@
+# The product explicitly opts in while the Coding tools preference stays off.
+- id: ui-sidebar-documentpreview
+  name: '@deepseek-ai/dsh-client-ui-sidebar-documentpreview'
+  config:
+    html:
+      mode: isolated-interactive

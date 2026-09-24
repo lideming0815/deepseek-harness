@@ -1,6 +1,9 @@
 /** Real native HTML isolation with the owning Host route and loopback HTTP/WebRTC sinks. */
 import { createSocket } from 'node:dgram'
 import { once } from 'node:events'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { chromium } from 'playwright'
@@ -9,19 +12,21 @@ import { afterAll, beforeAll, expect, it, onTestFinished } from 'vitest'
 import * as preview from '../../../packages/client/ui-sidebar-documentpreview/src/index.ts'
 import { isolatedHtmlPath } from '../../../packages/client/ui-sidebar-documentpreview/src/isolated-html.ts'
 import { createHtmlDocument } from '../../../packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts'
+import { assertFixtureInventory, compareOrRefreshGolden, launchWebScaffold, webSnapshotMode } from './scaffold.ts'
+import { connectFreshWorkspace, newEnglishPage } from './support.ts'
 
 const encode = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text)
 const token = 'native-isolation-fixture'
-const html = createHtmlDocument({
-  data: encode('<!doctype html><link rel="stylesheet" href="a.css"><h1>本地报告</h1><p id="result"></p>'
-    + '<img alt="local chart" src="a.svg"><button onclick="this.textContent=\'clicked\'">Details</button><script src="a.js"></script>'),
-  assets: [
-    { kind: 'stylesheet', reference: 'a.css', data: encode('h1{color:rgb(17,34,51)}') },
-    { kind: 'script', reference: 'a.js', data: encode('document.querySelector("#result").textContent="经典脚本"') },
-    { kind: 'image', reference: 'a.svg', mediaType: 'image/svg+xml',
-      data: encode('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text y="20">图表</text></svg>') },
-  ],
-}, token)
+const documentHtml = '<!doctype html><link rel="stylesheet" href="a.css"><h1>本地报告</h1><p id="result"></p>'
+  + '<img alt="local chart" src="a.svg"><button onclick="this.textContent=\'clicked\'">Details</button><script src="a.js"></script>'
+const assets = [
+  { kind: 'stylesheet', reference: 'a.css', data: encode('h1{color:rgb(17,34,51)}') },
+  { kind: 'script', reference: 'a.js', data: encode('document.querySelector("#result").textContent="经典脚本"') },
+  { kind: 'image', reference: 'a.svg', mediaType: 'image/svg+xml',
+    data: encode('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text y="20">图表</text></svg>') },
+] as const
+const html = createHtmlDocument({ data: encode(documentHtml), assets }, token)
+const snapshotDir = fileURLToPath(new URL('../../../snapshots/web/isolated-html-policy', import.meta.url))
 const parentHtml = `<!doctype html><meta charset="utf-8"><output id="events">pending</output><script>
 addEventListener('message',event=>{
   if(event.source!==document.querySelector('iframe').contentWindow||event.data.token!=='${token}')return;
@@ -38,11 +43,13 @@ const httpHits: string[] = []
 const udpHits: number[] = []
 let base: string
 let udpPort: number
+let udpListening = false
 
 beforeAll(async () => {
   udp.on('message', (data) => { udpHits.push(data.byteLength) })
   udp.bind(0, '127.0.0.1')
   await once(udp, 'listening')
+  udpListening = true
   udpPort = udp.address().port
   await ctx.plugin(WebServer, WebServer.Config({ host: '127.0.0.1', port: 0 }))
   await ctx.plugin(preview, preview.Config({ html: { mode: 'isolated-interactive' } }))
@@ -65,18 +72,29 @@ beforeAll(async () => {
   httpHits.length = 0
 })
 
-afterAll(async () => { udp.close(); await ctx.fiber.dispose() })
+afterAll(async () => {
+  try {
+    if (udpListening) await new Promise<void>(resolve => udp.close(resolve))
+  } finally {
+    await ctx.fiber.dispose()
+  }
+})
 
 /** The same test can use a locally installed browser without committing machine-specific paths. */
-async function browserPage(enabled: boolean): Promise<{ browser: Browser; page: Page }> {
+async function launchBrowser(enabled: boolean): Promise<Browser> {
   const executablePath = process.env.DSH_PLAYWRIGHT_EXECUTABLE_PATH
-  const browser = await chromium.launch({
+  return await chromium.launch({
     ...executablePath === undefined ? {} : { executablePath },
     // Chromium versions still in the origin trial exercise their real policy implementation here.
     args: [enabled
       ? '--enable-features=ConnectionAllowlists,OverrideConnectionAllowlistOriginTrial'
       : '--disable-features=ConnectionAllowlists'],
   })
+}
+
+/** Each policy probe owns and closes its browser even after assertion failures. */
+async function browserPage(enabled: boolean): Promise<{ browser: Browser; page: Page }> {
+  const browser = await launchBrowser(enabled)
   onTestFinished(async () => { await browser.close() })
   return { browser, page: await browser.newPage() }
 }
@@ -144,4 +162,81 @@ it.each(['stripped-header', 'unsupported-policy'] as const)('withholds all docum
   expect(await page.frameLocator('iframe').getByRole('heading').count()).toBe(0)
   expect(httpHits).toEqual([])
   expect(udpHits).toEqual([])
+})
+
+it('shows the shipped Files preview and fail-closed feedback with Coding tools disabled', async () => {
+  const scaffold = await launchWebScaffold({
+    developerTools: false,
+    replayFixture: fileURLToPath(new URL('../../../snapshots/web/lifecycle-chrome/session.v4.jsonl', import.meta.url)),
+    compareReplaySession: 'read-only',
+    paceMs: 5,
+    extraOverlayPath: join(snapshotDir, 'preview.patch.yml'),
+  })
+  let browser: Browser | undefined
+  try {
+    browser = await launchBrowser(true)
+    const page = await newEnglishPage(browser)
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await connectFreshWorkspace(page, scaffold.workspaceCwd)
+    const settled = scaffold.whenTurnSettled()
+    const input = page.locator('[data-composer-input]').first()
+    await input.fill('Reply with the single word LIGHTHOUSE and stop.')
+    await input.press('Enter')
+    const sessionId = await settled
+    await page.getByText('LIGHTHOUSE', { exact: true }).waitFor()
+    const cwd = scaffold.ctx.agents.get(sessionId)?.session.header.cwd
+    if (cwd === undefined) throw new Error('settled Session has no workspace cwd')
+    await Promise.all([
+      writeFile(join(cwd, 'report.html'), documentHtml),
+      writeFile(join(cwd, 'unavailable.html'), documentHtml),
+      ...assets.map(asset => writeFile(join(cwd, asset.reference), asset.data)),
+    ])
+    const column = page.locator('[data-rightbar-col]')
+    await page.locator('[data-sidebar-right-expand]').click()
+    await column.locator('[data-sidebar-right-guide-entry="files"]').click()
+    await column.locator('[data-files-state="tree"]').waitFor({ state: 'visible' })
+    await column.locator('[data-files-entry="file"]').getByRole('button', { name: 'report.html', exact: true }).click()
+    const preview = column.locator('[data-textpreview-url]')
+    const frame = page.frameLocator('[data-html-preview]')
+    await preview.locator('[data-html-preview]').waitFor({ state: 'visible' })
+    expect(await frame.getByRole('heading').textContent()).toBe('本地报告')
+    expect(await frame.locator('#result').textContent()).toBe('经典脚本')
+    const color = await frame.getByRole('heading').evaluate(node => getComputedStyle(node).color)
+    const width = await frame.getByRole('img').evaluate(node => (node as HTMLImageElement).naturalWidth)
+    expect(color).toBe('rgb(17, 34, 51)')
+    expect(width).toBe(100)
+    await frame.getByRole('button').press('Enter')
+    expect(await frame.getByRole('button').textContent()).toBe('clicked')
+    const success = await frame.locator('body').ariaSnapshot()
+    const sandbox = await preview.locator('[data-html-preview]').getAttribute('sandbox')
+    expect(sandbox).toBe('allow-scripts')
+    expect(await preview.getByRole('alert').count()).toBe(0)
+
+    await page.route(`**${isolatedHtmlPath}`, async (route) => {
+      const response = await route.fetch()
+      const headers = response.headers()
+      delete headers['connection-allowlist']
+      await route.fulfill({ response, headers })
+    })
+    await column.locator('[data-dockkit-tab]').filter({ has: page.getByText('Files', { exact: true }) }).click()
+    await column.locator('[data-files-entry="file"]').getByRole('button', { name: 'unavailable.html', exact: true }).click()
+    const alert = preview.getByRole('alert')
+    await expect.poll(() => alert.textContent(), { timeout: 10_000 })
+      .toBe('This browser or server does not support isolated interactive previews.')
+    expect(await preview.locator('[data-html-preview]').count()).toBe(0)
+    expect(await preview.getByRole('status').count()).toBe(0)
+    await compareOrRefreshGolden(join(snapshotDir, 'preview.expected.md'), [
+      '# Isolated HTML preview', '', '## Rendered document', '',
+      '- Coding tools: disabled', `- Sandbox: ${sandbox}`, `- Heading color: ${color}`, `- Image width: ${width}`,
+      '', '```yaml', success, '```', '', '## Missing native policy', '',
+      '```yaml', await alert.ariaSnapshot(), '```',
+    ].join('\n'), webSnapshotMode())
+    await assertFixtureInventory(snapshotDir, ['preview.expected.md', 'preview.patch.yml'])
+  } finally {
+    try {
+      await browser?.close()
+    } finally {
+      await scaffold.close()
+    }
+  }
 })
