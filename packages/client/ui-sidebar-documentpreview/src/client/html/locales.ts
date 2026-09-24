@@ -4,6 +4,7 @@ export const zh = {
   frame: 'HTML 文档预览',
   loading: '文档渲染中...',
   failed: '无法预览这份 HTML 文档',
+  unavailable: '当前浏览器或服务端不支持隔离交互预览',
 } satisfies Record<string, string>
 
 /** HTML renderer dictionary keys. */
@@ -15,6 +16,7 @@ export const en = {
   frame: 'HTML document preview',
   loading: 'Rendering document...',
   failed: 'This HTML document could not be previewed.',
+  unavailable: 'This browser or server does not support isolated interactive previews.',
 } satisfies Record<HtmlPreviewKey, string>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

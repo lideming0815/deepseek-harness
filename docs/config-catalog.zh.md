@@ -605,8 +605,13 @@ export interface Config {
 - `source`: [`packages/client/ui-sidebar-documentpreview/src/config.ts:5`](../packages/client/ui-sidebar-documentpreview/src/config.ts)
 
 ```ts config-catalog
-/** Transient Office conversion reuse within one Client connection. */
+/** HTML execution policy and bounded document processing within one Client connection. */
 export interface Config {
+  /** HTML execution policy, independent from other Coding Tools capabilities. */
+  html: {
+    /** Coding Tools preserves the user preference; isolated mode requires a finite local resource set. */
+    mode: 'coding-tools' | 'static' | 'isolated-interactive'
+  }
   /** Retained PDF limits; pending conversions share cancellation by reader lifetime. */
   office: {
     /** Maximum retained completed PDFs. */

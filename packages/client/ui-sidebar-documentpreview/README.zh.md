@@ -46,9 +46,23 @@ tab 使用 `fileAddressFor` 构造的 Session 地址，携带相对或绝对路�
 <a id="how-it-reads"></a>
 ## 怎么读
 
-Web 和桌面端均通过代码工作工具选择 HTML 预览策略。渲染器从插件组装层接收 `interactivePreview`。关闭时，将经 DOMPurify 清理的完整静态文档放入不授予沙箱权限的 iframe：CSP 禁止脚本、外部资源、连接、表单和嵌套框架；所有 `href` 和 `xlink:href` 属性、刷新指令及声明式 Shadow DOM 均在重新解析前被移除。行内样式和 data 图片仍可显示，不读取关联文件。开启时使用下述支持脚本的 Blob 预览。切换模式会卸载之前的框架并中止其待处理关联文件读取。静态预览释放 CSS/JS 的 Resource 订阅，根文件继续监听。其他文档格式保持各自策略。
+在 `ui-sidebar-documentpreview` Host 条目上配置 `html.mode`；默认值 `coding-tools` 保留 Web 和桌面端的代码工作工具偏好。
 
-两种 HTML 模式均将 iframe 初始名称设为 `dsh-sidebar-html-<tab-id>`，供 Desktop 快捷键路由关联目标。这种关联不授予预览访问父文档的权限。
+`static` 始终将经 DOMPurify 清理的文档放入不授予沙箱权限的 iframe，不受该偏好影响。
+
+其 CSP 禁止脚本、外部资源、连接、表单和嵌套框架；清理过程移除导航属性、刷新指令和声明式 Shadow DOM。
+
+行内样式和 data 图片仍可显示，不读取关联文件。
+
+`isolated-interactive` 启用下述有限离线 HTML 预览，无需开启其他代码工作工具能力。
+
+切换模式会卸载之前的框架并中止待处理关联文件读取；静态预览释放依赖订阅，根 Resource 继续保留。
+
+其他文档格式保持各自策略。
+
+所有 HTML 模式均将 iframe 初始名称设为 `dsh-sidebar-html-<tab-id>`，供 Desktop 快捷键路由关联目标。
+
+这种关联不授予访问父文档的权限。
 
 正文通过 `useTabInfo().tab` 读取记录、导航和生命周期。`useResource<'file'>(tab.contentId)` 提供元数据，普通 inject 回调提供内容读取：
 
@@ -57,7 +71,41 @@ Web 和桌面端均通过代码工作工具选择 HTML 预览策略。渲染器�
 - **完整字节** —— PDF、HTML、常见图片和表格调用 `remote.workspaceFiles.readBytes(sessionId, path, {}, signal)`。二进制 Remote 直接返回 `data: Uint8Array<ArrayBuffer>`，供 `{ kind: 'bytes', data }` 使用。Host 的 `maxFileBytes` 上限拒绝超大文件，不截断。PDF 和表格渲染器在传给 Worker 前复制保留的字节，使 Preview 缓冲区仍可使用。字节仅保存在临时视图状态中，绝不进入持久布局或 Session JSONL。加载模式变化会淘汰先前结果。
 - **重新载入** —— 手动重新载入仅让当前 Preview tab 通过自己的 Remote 回调重读，保留滚动偏好并淘汰旧请求。`ResourceGroup` 成员变化后，自动刷新使用相同回调。各成员首次元数据仅建立基线，不触发重新载入或首读版本对账；后续在读取期间收到的变化仍会留待下一次刷新。读取既不刷新共享元数据，也不清除其它 tab 的提示。
 
-开启代码工作工具时，HTML 以贴合正文四边的 Blob iframe 运行，沙箱属性严格为 `sandbox="allow-scripts"`，不含 `allow-same-origin`；脚本无法访问父应用的源或文件读取接口。渲染器通过注入的 Remote 回调，加载直接声明的相对 `.js` 经典脚本和 `.css` 样式表；固定安全上限为单个资源 4 MiB、总计 32 MiB、64 个不同资源。Host 代码解析关联路径，带 `baseFile` 的 `readBytes` 返回原生字节。依赖 Resource 在读取返回后加入，使用返回的 `absolutePath`，失败时则使用字符串类型的 `error.details.path`；没有 Host 路径时，Client 不自行猜测。在渲染器内部，base64 仅用于把 iframe 引导载荷嵌入脚本文本。`<base href>` 将依赖解析交给浏览器，HTTPS 资源也由浏览器处理。本地模块 import、CSS `url()`/`@import` 和动态 `fetch` 不使用 Host 文件访问。读取失败、无效 UTF-8 或超出上限都使预览失败，不发布部分资源包。替换或卸载文档会释放其 Blob URL。
+当 `html.mode: coding-tools` 且代码工作工具开启时，HTML 以 Blob iframe 填满正文，使用 `sandbox="allow-scripts"`，不含 `allow-same-origin`；脚本无法访问父应用或文件读取接口。
+
+直接声明的相对 `.js` 经典脚本和 `.css` 样式表使用注入的 Remote 回调，固定上限为单个资源 4 MiB、含文档总计 32 MiB、64 个不同资源。
+
+`readBytes(sessionId, relativePath, { baseFile }, signal)` 保留原文档地址的 Session 和目录权限，包括提供方定义的不可变版本作用域。
+
+URL 属性先去除首尾空白、查询和片段后缀，再将文件名解码一次后交给 Host 读取。
+
+依赖 Resource 使用返回的 `absolutePath`，失败时使用字符串类型的 `error.details.path`；Client 不猜测缺失路径。
+
+在此默认模式下，`<base href>` 和 HTTPS 资源仍由浏览器解析；模块导入、CSS 资源引用和动态请求没有 Host 文件桥接。
+
+读取失败、无效 UTF-8 或超过上限都会使预览失败；替换文档时释放其 Blob URL。
+
+显式选择的 `isolated-interactive` 模式还会打包相对 PNG、JPEG、GIF、WebP、BMP 和被动 SVG 图片，并支持规范 base64 图片数据。
+
+它在打开框架前拒绝外部引用、模块、嵌套文档、表单、导航目标，以及 CSS `url()`、图片函数、`@import` 或转义。
+
+关联 CSS 必须自包含；关联文件仅通过同一作用域读取器获取，不支持或缺失的依赖会使整个预览失败。
+
+Host 在 `/assets/document-preview/isolated-html` 提供不含用户数据的引导文档，设置 `Connection-Allowlist: (); report-to=preview` 和强制 CSP。
+
+服务端不配置 `Reporting-Endpoints` 目标。
+
+不透明源框架构造并关闭一个没有 ICE 服务器或 offer 的 WebRTC 连接，只有本地 `ReportingObserver` 报告证明空连接允许列表已强制生效后，才接收文档字节。
+
+浏览器原生响应策略在文档替换后继续生效，阻止 HTTP 请求、WebRTC 和文档导航；CSP 另行限制资源、表单、Worker 和后代框架。
+
+路由缺失、响应头被剥离、浏览器不支持或没有强制策略报告时，显示不支持预览的消息，框架不会收到文档。
+
+资源错误、脚本错误、未处理的 Promise 拒绝和观察到的策略违规会将框架替换为失败消息；渲染后的文档负责确认加载。
+
+此模式要求 HTTP(S) 应用基址并保留响应策略；基于文件的桌面加载不能使用该模式。
+
+[隔离决策](../../../.agents/notes/implemented/feature/2026-09-24-isolated-html-preview.zh.md)说明为何单独依赖沙箱和 `connect-src` 不足。
 
 PNG、JPEG、GIF、WebP、BMP、ICO 和 SVG 通过 Blob URL 在 `<img>` 静态图片上下文中渲染，带 12px 内边距和圆角。图片默认适应宽度，但不会放大小于面板的内容；100% 使用图片的固有 CSS 像素宽度。共享缩放控件可产生横向和纵向滚动，但不提供拖拽平移。缩放不会替换 `<img>` 或 Blob URL，因此动画图片会继续播放。位图超过固有尺寸后可能变虚，SVG 则继续使用浏览器的矢量渲染路径。SVG 标记绝不进入应用 DOM 或 iframe，因此其中的脚本无法执行，也无法访问父页面。替换或卸载图片会撤销其 Blob URL。
 
@@ -140,7 +188,9 @@ Office Remote 通过 Connection 的 multipart 二进制传输返回原生 `Uint8
 - **文本顺序分页，完整文件受限。** 定位到较深处的源码行需要先加载此前各页；PDF、HTML 和图片必须取得 Host `maxFileBytes` 上限内的完整结果。
 - **PDF 栅格分配有上限。** 每页位图最多为 16,777,216 像素；超大页面或高像素密度屏幕上的高比例缩放仍可能低于设备分辨率。
 - **字节视图不恢复滚动位置。** PDF、HTML 与图片的渲染器重新挂载或重新载入时可能回到顶部；固定 PDF 与图片缩放可产生横向滚动，HTML iframe 的滚动属于其不透明浏览上下文。
-- **本地 HTML 依赖集合有限。** 只打包直接引用的经典 `.js` 脚本和 `.css` 样式表。浏览器解析的资源仍受浏览器源与网络规则限制；iframe 不获得运行时文件读取桥接。
+- **本地 HTML 依赖集合有限。** 默认模式打包直接声明的经典 `.js` 和 `.css` 样式表；隔离交互增加被动本地图片，并拒绝递归 CSS、模块和外部依赖。
+
+  隔离交互要求浏览器证明原生连接策略已经强制生效；该模式不限制脚本 CPU 或内存。
 - **滚动写入未节流。** 每次滚动事件都把偏移记进 store；行块已 memo 化，于是由此引发的重渲染交还给 React 的是同一批元素。
 - **PDF chunk 加载失败后需要刷新页面。** React 会在页面生命周期内缓存被拒绝的 lazy import；已加载正文中的普通 PDF 打开或渲染失败仍可重试。
 

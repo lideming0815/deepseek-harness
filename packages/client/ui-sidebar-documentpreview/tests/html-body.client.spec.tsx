@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** HTML iframe ownership follows file identity and bytes, not locale or wrapping changes. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { bindSnapshotSelector, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
 import { DeveloperToolsPreference } from '@deepseek-ai/dsh-client-ui-settings/src/client/developer-tools.ts'
@@ -46,6 +46,7 @@ function props(text = '<p>hello</p>'): HtmlBodyProps {
   const signal = new AbortController().signal
   return {
     useInteractivePreview: select => select(true),
+    htmlMode: 'coding-tools',
     resourceAddress: 'dsh-resource://file/session/html/index.html',
     content: { kind: 'bytes', data: utf8(text) },
     wrap: false,
@@ -62,6 +63,50 @@ function props(text = '<p>hello</p>'): HtmlBodyProps {
 const utf8 = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text)
 
 describe('HtmlBody', () => {
+  it('forces static mode independently of Coding Tools', () => {
+    const input = props('<button onclick="alert(1)">static</button>')
+    const view = render(<HtmlBody {...input} htmlMode="static" />)
+    const frame = view.container.querySelector('iframe')!
+    expect(frame.getAttribute('sandbox')).toBe('')
+    expect(frame.srcdoc).not.toContain('onclick')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('requires the current opaque bootstrap to prove isolation before sending HTML', async () => {
+    const input = props('<button onclick="this.textContent=\'clicked\'">private document</button>')
+    const view = render(<HtmlBody {...input} htmlMode="isolated-interactive" useInteractivePreview={select => select(false)} />)
+    await waitFor(() => { expect(view.container.querySelector('iframe')).not.toBeNull() })
+    const frame = view.container.querySelector('iframe')!
+    expect(frame.src).toContain('/assets/document-preview/isolated-html')
+    expect(frame.srcdoc).toBe('')
+    expect(create).not.toHaveBeenCalled()
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+    fireEvent.load(frame)
+    const init = post.mock.calls[0]?.[0] as { token: string }
+    expect(post).toHaveBeenCalledExactlyOnceWith({ type: 'dsh-html-init', token: init.token }, '*')
+    act(() => { window.dispatchEvent(new MessageEvent('message', { source: window, data: { type: 'dsh-html-ready', token: init.token } })) })
+    expect(post).toHaveBeenCalledOnce()
+    act(() => { window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data: { type: 'dsh-html-ready', token: init.token } })) })
+    const output: unknown = post.mock.calls[1]?.[0]
+    expect(output).toMatchObject({ type: 'dsh-html-render', token: init.token })
+    expect(output).toHaveProperty('html')
+    act(() => { window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data: { type: 'dsh-html-failed', token: init.token } })) })
+    expect(screen.getByRole('alert').textContent).toBe(en.failed)
+    expect(view.container.querySelector('iframe')).toBeNull()
+  })
+
+  it('shows an unsupported browser without sending document bytes', async () => {
+    const view = render(<HtmlBody {...props()} htmlMode="isolated-interactive" />)
+    await waitFor(() => { expect(view.container.querySelector('iframe')).not.toBeNull() })
+    const frame = view.container.querySelector('iframe')!
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+    fireEvent.load(frame)
+    const init = post.mock.calls[0]?.[0] as { token: string }
+    act(() => { window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, data: { type: 'dsh-html-unavailable', token: init.token } })) })
+    expect(screen.getByRole('alert').textContent).toBe(en.unavailable)
+    expect(post).toHaveBeenCalledOnce()
+  })
+
   it.each(['css', 'js'] as const)('reloads the HTML when only its %s resource changes', async (extension) => {
     const h = harness()
     const previewProps = h.props()
